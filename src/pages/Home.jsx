@@ -56,7 +56,7 @@ export default function Home() {
       ])
       setSessions(s); setStreak(str); setRecent(r)
       const ctx = detectContext({ streakDays: str, sessionCount: s })
-      const msg = getOfflineResponse(ctx)
+      const msg = getOfflineResponse(ctx, profile?.name)
       setFluxMsg(msg)
 
       // Get AI personalized recommendation
@@ -76,7 +76,7 @@ export default function Home() {
   const ageGroup  = profile?.ageGroup || 'explorer'
 
   const tapFlux = () => {
-    const m = getOfflineResponse('encouragement')
+    const m = getOfflineResponse('encouragement', profile?.name)
     setFluxMsg(m)
     fluxSay(m, true)
   }
