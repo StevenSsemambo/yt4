@@ -4,6 +4,7 @@ import { useApp } from './hooks/useAppContext'
 import { getSetting } from './utils/db'
 
 import BottomNav    from './components/shared/BottomNav'
+import AudioReader  from './components/shared/AudioReader'
 import Notification from './components/shared/Notification'
 import Flux         from './components/flux/Flux'
 import DailyCheckIn, { useCheckIn } from './components/ui/DailyCheckIn'
@@ -81,11 +82,11 @@ function HomeWrapper({ children }) {
 
 export default function App() {
   return (
-    <div className="min-h-screen max-w-md mx-auto relative overflow-x-hidden"
-         style={{ background: 'var(--ink)' }}>
+    <div className="max-w-md mx-auto relative"
+         style={{ background: 'var(--ink)', minHeight: '100dvh' }}>
 
       {/* Global aurora mesh */}
-      <div className="fixed inset-0 pointer-events-none z-0 max-w-md mx-auto overflow-hidden">
+      <div className="fixed inset-0 pointer-events-none z-0 max-w-md mx-auto" style={{ overflow: 'hidden' }}>
         <div className="absolute top-0 left-1/3 w-72 h-72 rounded-full"
              style={{ background:'radial-gradient(circle, rgba(34,211,238,0.05), transparent 70%)' }}/>
         <div className="absolute top-1/3 right-0 w-56 h-56 rounded-full"
@@ -94,7 +95,7 @@ export default function App() {
              style={{ background:'radial-gradient(circle, rgba(251,191,36,0.03), transparent 70%)' }}/>
       </div>
 
-      <div className="relative z-10">
+      <div className="relative z-10" style={{ WebkitOverflowScrolling: 'touch' }}>
         <Routes>
           <Route path="/"           element={<Splash />} />
           <Route path="/auth"       element={<Auth />} />
@@ -126,6 +127,7 @@ export default function App() {
         </Routes>
 
         <BottomNav />
+        <AudioReader />
         <Notification />
       </div>
     </div>
