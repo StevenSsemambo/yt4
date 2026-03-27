@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getSetting } from '../utils/db'
+import { getSetting, db } from '../utils/db'
 
 // ─── ANIMATED FLUX LOGO SVG ────────────────────────────────────────────────────
 function FluxLogo({ size = 120 }) {
@@ -73,6 +73,10 @@ export default function Splash() {
     const t3 = setTimeout(() => setPhase('exit'),    3200)
     const t4 = setTimeout(async () => {
       setDone(true)
+      // Bug 4 fix: ensure Dexie has finished any pending schema upgrade
+      // (v1→v2) before reading settings, otherwise getSetting returns
+      // the default and already-onboarded users get sent to /onboarding.
+      await db.open()
       const onboarded = await getSetting('onboarded', false)
       navigate(onboarded ? '/home' : '/onboarding', { replace: true })
     }, 3900)
