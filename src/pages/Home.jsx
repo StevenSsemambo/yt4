@@ -68,7 +68,7 @@ export default function Home() {
       setLoadingRec(false)
     }
     load()
-  }, [])
+  }, [profile])  // Bug 3 fix: re-run when profile loads so recommendation is personalised
 
   const modeConf  = MODE_CONFIG[mode] || MODE_CONFIG.stutter
   const greeting  = (() => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening' })()
