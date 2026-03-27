@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { addSession, getSetting, setSetting } from '../utils/db'
+import { addSession, getSetting, setSetting, db } from '../utils/db'
 import { useApp } from '../hooks/useAppContext'
 import { getOfflineResponse } from '../ai/fluxEngine'
 import Flux from '../components/flux/Flux'
@@ -68,7 +68,9 @@ export default function NeuroBrain() {
   useEffect(() => {
     const load = async () => {
       const unlocked = await getSetting('neurobrain_unlocked', {})
-      const sessions = await getSetting('total_sessions_cache', 0)
+      // Bug 6 fix: 'total_sessions_cache' was never written anywhere — always
+      // returned 0 and locked every module. Use the live session count instead.
+      const sessions = await db.sessions.count()
       setUnlockedCards(unlocked || {})
       setTotalSessions(sessions || 0)
     }
