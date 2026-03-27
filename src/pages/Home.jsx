@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../hooks/useAppContext'
 import Flux from '../components/flux/Flux'
@@ -37,27 +37,29 @@ const QUICK_ACTIONS = [
   { id: 'voicelab',    label: 'Voice Lab',     icon: '🎵', path: '/voicelab',     color: 'from-cyan-500/15 to-sky-500/15',     border: 'border-cyan-500/20',   pill: 'pill-aqua',   time: '6 skills' },
 ]
 
-// Simple Error Boundary Component
-class ErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false };
-  }
+// Simple Error Boundary Component - defined as a function component with error handling
+const FluxErrorBoundary = ({ children }) => {
+  const [hasError, setHasError] = useState(false)
 
-  static getDerivedStateFromError(error) {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error, errorInfo) {
-    console.error('Flux component error:', error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return <div className="w-28 h-28 rounded-full bg-white/10 flex items-center justify-center text-4xl">✨</div>;
+  useEffect(() => {
+    const handleError = (error) => {
+      console.error('Flux component error:', error)
+      setHasError(true)
     }
-    return this.props.children;
+
+    // Add error event listener
+    window.addEventListener('error', handleError)
+    
+    return () => {
+      window.removeEventListener('error', handleError)
+    }
+  }, [])
+
+  if (hasError) {
+    return <div className="w-28 h-28 rounded-full bg-white/10 flex items-center justify-center text-4xl">✨</div>
   }
+
+  return children
 }
 
 export default function Home() {
@@ -194,7 +196,9 @@ export default function Home() {
     try {
       const m = getOfflineResponse('encouragement', profile?.name)
       setFluxMsg(m || 'You\'re doing great!')
-      fluxSay(m, true)
+      if (fluxSay) {
+        fluxSay(m, true)
+      }
     } catch (err) {
       console.error('Failed to get flux message:', err)
       setFluxMsg('Keep going! You\'re doing amazing!')
@@ -249,7 +253,7 @@ export default function Home() {
               const next = mode === 'stutter' ? 'comm' : 'stutter'
               setMode(next)
             }}
-            className="pill text-xs transition-all active:scale-95 px-3 py-1.5 rounded-full"
+            className="px-3 py-1.5 rounded-full text-xs transition-all active:scale-95"
             style={{ 
               background: modeConf.glow || 'rgba(34,211,238,0.1)', 
               borderColor: modeConf.color, 
@@ -282,19 +286,21 @@ export default function Home() {
         <div className="relative mb-4 cursor-pointer" onClick={tapFlux}>
           {/* Outer ring */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="w-36 h-36 rounded-full border border-aqua/10 animate-pulse-ring" style={{ animationDuration: '3s' }}/>
+            <div className="w-36 h-36 rounded-full border border-aqua/10" style={{ animation: 'pulse-ring 3s infinite' }}/>
           </div>
           <div style={{ filter: fluxSpeaking ? 'drop-shadow(0 0 20px var(--aqua))' : 'drop-shadow(0 0 10px rgba(34,211,238,0.3))' }}>
-            <ErrorBoundary>
+            <FluxErrorBoundary>
               <Flux size={110} ageGroup={ageGroup} mood={fluxSpeaking ? 'excited' : 'happy'} speaking={fluxSpeaking} />
-            </ErrorBoundary>
+            </FluxErrorBoundary>
           </div>
         </div>
 
         {/* Flux message */}
         {fluxMsg && (
           <div className="max-w-[280px] text-center">
-            <p className="text-white/70 text-sm leading-relaxed glass rounded-2xl px-4 py-3">{fluxMsg}</p>
+            <p className="text-white/70 text-sm leading-relaxed rounded-2xl px-4 py-3" style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(10px)' }}>
+              {fluxMsg}
+            </p>
           </div>
         )}
       </div>
@@ -306,7 +312,7 @@ export default function Home() {
           { val: `${streak}🔥`,                  label: 'Day Streak',  icon: '📅', color: 'text-amber' },
           { val: `${sessions * 15}`,             label: 'Stars',       icon: '⭐', color: 'text-jade' },
         ].map((s, i) => (
-          <div key={i} className="bg-white/5 backdrop-blur-sm rounded-2xl p-4 text-center border border-white/10">
+          <div key={i} className="rounded-2xl p-4 text-center border border-white/10" style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(10px)' }}>
             <div className={`font-display font-bold text-xl ${s.color}`}>{s.val}</div>
             <div className="text-white/35 text-xs mt-0.5">{s.label}</div>
           </div>
@@ -316,14 +322,14 @@ export default function Home() {
       {/* ── AI Recommendation ───────────────────────────────────────────── */}
       {(aiRec || loadingRec) && (
         <div className="mx-5 mb-5">
-          <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-4 border border-aqua/15 relative overflow-hidden">
+          <div className="rounded-2xl p-4 border border-aqua/15 relative overflow-hidden" style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(10px)' }}>
             <div className="relative flex gap-3 items-start">
               <div className="w-8 h-8 rounded-xl flex-shrink-0 flex items-center justify-center text-sm"
                    style={{ background: 'rgba(34,211,238,0.15)' }}>🧠</div>
               <div>
                 <div className="text-white/40 text-xs font-semibold uppercase tracking-wider mb-1">Flux recommends</div>
                 {loadingRec
-                  ? <div className="flex gap-1 py-1">{[0,1,2].map(i=><div key={i} className="w-2 h-2 rounded-full bg-white/20 animate-bounce" style={{animationDelay:`${i*0.15}s`}}/>)}</div>
+                  ? <div className="flex gap-1 py-1">{[0,1,2].map(i=><div key={i} className="w-2 h-2 rounded-full bg-white/20" style={{ animation: `bounce 1.4s infinite`, animationDelay: `${i*0.15}s` }}/>)}</div>
                   : <p className="text-white/80 text-sm leading-relaxed">{aiRec}</p>
                 }
               </div>
@@ -350,7 +356,7 @@ export default function Home() {
             <p className="text-white/50 text-sm mb-3">
               {mode === 'stutter' ? '6 zones · 30 missions · Your flow awaits' : 'Presentations · Interviews · Real-world speaking'}
             </p>
-            <div className="h-1.5 bg-white/10 rounded-full overflow-hidden mb-1">
+            <div className="h-1.5 rounded-full overflow-hidden mb-1" style={{ background: 'rgba(255,255,255,0.1)' }}>
               <div className="h-full rounded-full" style={{ width: `${Math.min((sessions % 5) * 20, 100)}%`, background: 'linear-gradient(90deg, var(--aqua), var(--violet))' }}/>
             </div>
             <p className="text-white/30 text-xs">{sessions % 5}/5 sessions this cycle</p>
@@ -367,11 +373,12 @@ export default function Home() {
             <button
               key={a.id}
               onClick={() => navigate(a.path)}
-              className={`relative p-4 rounded-2xl border bg-gradient-to-br ${a.color} ${a.border} text-left active:scale-95 transition-all duration-150`}
+              className={`relative p-4 rounded-2xl border text-left active:scale-95 transition-all duration-150`}
+              style={{ background: `linear-gradient(to bottom right, ${a.color.replace('from-', '').replace('/15', '15')}, ${a.color.split('to-')[1]?.replace('/15', '15') || 'rgba(255,255,255,0.05)'})`, borderColor: 'rgba(255,255,255,0.1)' }}
             >
               <div className="text-2xl mb-2">{a.icon}</div>
               <div className="font-display font-semibold text-white text-sm">{a.label}</div>
-              <div className={`mt-1.5 text-[10px] text-white/50`}>{a.time}</div>
+              <div className="mt-1.5 text-[10px] text-white/50">{a.time}</div>
             </button>
           ))}
         </div>
@@ -385,7 +392,8 @@ export default function Home() {
           { icon: '💬', label: 'Talk to Flux', desc: 'Voice conversation · always listening', path: '/flux-chat', color: 'var(--aqua)' },
         ].map((f, i) => (
           <button key={i} onClick={() => navigate(f.path)}
-            className="w-full bg-white/5 backdrop-blur-sm rounded-2xl p-4 flex items-center gap-4 active:scale-[0.98] transition-transform text-left border border-white/10">
+            className="w-full rounded-2xl p-4 flex items-center gap-4 active:scale-[0.98] transition-transform text-left border border-white/10"
+            style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(10px)' }}>
             <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl flex-shrink-0"
                  style={{ background: `${f.color}18`, border: `1px solid ${f.color}30` }}>{f.icon}</div>
             <div className="flex-1 min-w-0">
@@ -405,8 +413,8 @@ export default function Home() {
           <p className="text-white/40 text-xs font-semibold uppercase tracking-wider mb-3">Recent Activity</p>
           <div className="space-y-2">
             {recent.map((s, i) => (
-              <div key={i} className="bg-white/5 backdrop-blur-sm rounded-2xl p-4 flex items-center gap-3 border border-white/10">
-                <div className="w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center text-base flex-shrink-0">
+              <div key={i} className="rounded-2xl p-4 flex items-center gap-3 border border-white/10" style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(10px)' }}>
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center text-base flex-shrink-0" style={{ background: 'rgba(255,255,255,0.05)' }}>
                   {s.type==='breathe'?'💨':s.type==='speaklab'?'🗣️':s.type==='brave'?'🦁':s.type==='talktales'?'📖':'🎙️'}
                 </div>
                 <div className="flex-1 min-w-0">
