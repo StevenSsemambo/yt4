@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useApp } from './hooks/useAppContext'
-import { getSetting } from './utils/db'
 
 import BottomNav    from './components/shared/BottomNav'
 import AudioReader  from './components/shared/AudioReader'
@@ -49,12 +48,9 @@ function LoadingScreen() {
 }
 
 function RequireProfile({ children }) {
-  const { profile, loading } = useApp()
-  const [onboarded, setOnboarded] = useState(null)
-
-  useEffect(() => {
-    getSetting('onboarded', false).then(v => setOnboarded(v))
-  }, [])
+  // Bug 1 fix: onboarded comes from the same Promise.all as profile in AppContext,
+  // so both always resolve together — no second independent getSetting() race.
+  const { profile, loading, onboarded } = useApp()
 
   if (loading || onboarded === null) return <LoadingScreen />
   if (!onboarded || !profile) return <Navigate to="/auth" replace />
