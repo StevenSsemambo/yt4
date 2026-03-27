@@ -29,7 +29,7 @@ export const loadMemory = async (key, fallback = null) => {
 }
 
 export const buildUserMemory = async (profile) => {
-  const [insights, strengths, weaknesses, story, recs, moods, techPrefs] = await Promise.all([
+  const [insights, strengths, weaknesses, story, recs, moods, techPrefs, goals, convoHistory] = await Promise.all([
     loadMemory(MemoryKeys.INSIGHTS, []),
     loadMemory(MemoryKeys.STRENGTHS, []),
     loadMemory(MemoryKeys.WEAKNESSES, []),
@@ -37,15 +37,59 @@ export const buildUserMemory = async (profile) => {
     loadMemory(MemoryKeys.RECOMMENDATIONS, null),
     loadMemory(MemoryKeys.MOOD_HISTORY, []),
     loadMemory(MemoryKeys.TECHNIQUE_PREFS, {}),
+    loadMemory(MemoryKeys.GOALS, []),
+    loadMemory(MemoryKeys.CONVERSATION, []),
   ])
-  const sessions = await db.sessions.orderBy('date').reverse().limit(10).toArray()
-  const recentTypes = sessions.map(s => s.type).join(', ')
-  const avgScore = sessions.length ? Math.round(sessions.reduce((a, b) => a + (b.score || 0), 0) / sessions.length) : 0
+
+  const now = new Date()
+  const todayStr = now.toDateString()
+  const sessions = await db.sessions.orderBy('date').reverse().limit(20).toArray()
+  const totalSessions = await db.sessions.count()
+  const recentTypes = sessions.slice(0, 10).map(s => s.type).join(', ')
+
+  // Session frequency analysis
+  const sessionTypeCounts = sessions.reduce((acc, s) => {
+    acc[s.type] = (acc[s.type] || 0) + 1; return acc
+  }, {})
+  const neverDone = ['breathe','speaklab','brave','talktales','journal','mindshift','stutterscore']
+    .filter(t => !sessionTypeCounts[t])
+
+  // Streak calculation
+  const streaks = await db.streaks.orderBy('date').reverse().limit(14).toArray()
+  let streakDays = 0
+  for (let i = 0; i < streaks.length; i++) {
+    const d = new Date(streaks[i].date)
+    const diff = Math.floor((now - d) / 86400000)
+    if (diff === i) streakDays++
+    else break
+  }
+
+  // Today's sessions
+  const todaySessions = sessions.filter(s => new Date(s.date).toDateString() === todayStr)
+
+  // Average score
+  const avgScore = sessions.length
+    ? Math.round(sessions.reduce((a, b) => a + (b.score || 0), 0) / sessions.length)
+    : 0
+
+  // Mood trends
   const lastMood = moods.length ? moods[moods.length - 1] : null
+  const recentMoods = moods.slice(-5)
+  const moodTrend = recentMoods.length >= 3
+    ? (recentMoods.slice(-3).every(m => m.score >= 7) ? 'improving'
+      : recentMoods.slice(-3).every(m => m.score <= 4) ? 'struggling'
+      : 'mixed')
+    : 'unknown'
+
   return {
-    insights: insights.slice(-10), strengths: strengths.slice(-8), weaknesses: weaknesses.slice(-6),
-    story, recs, recentTypes, avgScore, totalSessions: await db.sessions.count(),
-    lastMood, moods: moods.slice(-7), techPrefs,
+    insights: insights.slice(-10), strengths: strengths.slice(-8),
+    weaknesses: weaknesses.slice(-6), story, recs, goals,
+    recentTypes, avgScore, totalSessions,
+    lastMood, moods: recentMoods, moodTrend, techPrefs,
+    sessionTypeCounts, neverDone, streakDays,
+    todaySessionCount: todaySessions.length,
+    recentConvo: convoHistory.slice(-6), // last 3 turns
+    firstSession: sessions.length > 0 ? sessions[sessions.length - 1]?.date : null,
   }
 }
 
@@ -150,16 +194,57 @@ const pickRandom = (pool) => pool[Math.floor(Math.random() * pool.length)]
 const personalise = (text, name, sessions) =>
   text.replace(/\{name\}/g, name || 'friend').replace(/\{sessions\}/g, sessions || 0)
 
+// Follow-up question bank — asked ~30% of the time to feel human
+const FOLLOWUP_QUESTIONS = {
+  anxious: [
+    "What does the anxiety feel like in your body when it happens?",
+    "Is this anxiety about a specific situation coming up, or more of a background feeling?",
+    "When you imagine the worst happening — what is it, exactly?",
+  ],
+  frustrated: [
+    "What specifically happened? Walk me through it.",
+    "Is this frustration about the stutter itself, or more about how people react?",
+    "Has this happened before, or does this feel different?",
+  ],
+  proud: [
+    "I want to hear exactly what happened — don't skip any details.",
+    "How did you feel in the moment, right when you did it?",
+    "What made you decide to try it this time?",
+  ],
+  despair: [
+    "What's the hardest part of today specifically?",
+    "Is there one moment that made today feel this heavy?",
+    "What would help right now — talking, practical ideas, or just being heard?",
+  ],
+  neutral: [
+    "What's been on your mind around speaking lately?",
+    "Where do you want to be with your speech in three months?",
+    "What's the speaking situation you're most avoiding right now?",
+    "When was the last time you surprised yourself with how you spoke?",
+  ],
+  progress: [
+    "What do you think is actually driving that improvement?",
+    "Which technique has clicked the most for you so far?",
+    "What's still not feeling natural yet?",
+  ],
+}
+
 export const getIntelligentOfflineResponse = async (userText, profile) => {
   const memory = await buildUserMemory(profile)
   const name = profile?.name || 'friend'
-  const ag = profile?.ageGroup || 'explorer'
   const sessions = memory.totalSessions || 0
   const emotion = detectEmotion(userText)
   const topic = detectTopic(userText)
   conversationState.turnCount++
   conversationState.lastEmotion = emotion
   if (!conversationState.topicsDiscussed.includes(topic)) conversationState.topicsDiscussed.push(topic)
+
+  // ~30% of the time on turns 2+: ask a genuine follow-up question instead of advice
+  const shouldAskFollowUp = conversationState.turnCount > 1 && Math.random() < 0.3
+  if (shouldAskFollowUp) {
+    const qPool = FOLLOWUP_QUESTIONS[emotion] || FOLLOWUP_QUESTIONS.neutral
+    return personalise(pickRandom(qPool), name, sessions)
+  }
 
   let pool = DR.general
   if (emotion === 'despair') pool = DR.despair
@@ -179,15 +264,31 @@ export const getIntelligentOfflineResponse = async (userText, profile) => {
   else if (topic === 'confidence') pool = DR.confidence
   else if (topic === 'technique' || topic === 'stuttering') pool = DR.techniques.general
   else if (topic === 'family') pool = DR.parent_tips
+  else if (topic === 'progress') pool = [...DR.encouragement, ...DR.check_ins]
   else if (sessions === 0) pool = DR.new_user
   else if (sessions < 5) pool = DR.early_journey
   else if (sessions >= 50) pool = DR.veteran
   else {
     const rotating = [DR.wisdom, DR.check_ins, DR.challenges, DR.encouragement]
-    pool = rotating[conversationState.turnCount % rotating.length]
+    pool = rotating[Math.floor(Math.random() * rotating.length)]
   }
 
-  return personalise(pickRandom(pool), name, sessions)
+  // Occasionally surface a pattern Flux has noticed (memory-driven)
+  if (memory.neverDone?.length && Math.random() < 0.15 && sessions > 3) {
+    const suggestion = memory.neverDone[0]
+    const suggestionMap = {
+      breathe: "By the way — I notice you haven't tried the Breathe section yet. It's worth it before difficult conversations.",
+      brave: "Something I've noticed: you haven't done a BraveMission yet. That's often where the real shift happens.",
+      mindshift: "Have you looked at MindShift? It works on the mental layer that techniques alone can't reach.",
+      journal: "Your Voice Journal has no entries yet. Even one 30-second recording changes how you hear yourself.",
+    }
+    if (suggestionMap[suggestion]) {
+      return personalise(suggestionMap[suggestion], name, sessions)
+    }
+  }
+
+  const response = pickRandom(pool)
+  return personalise(response, name, sessions)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -510,24 +611,33 @@ const DR = {
   ],
 }
 
-// Legacy compatibility
+// Legacy compatibility + full routing map
 const RESPONSES = {
   onboarding: DR.onboarding, celebration: DR.celebration, struggle: DR.struggle,
   breathing: DR.techniques.breathing, brave_missions: DR.brave_missions,
   voluntary_stutter: DR.voluntary_stutter, story_prompts: DR.story_prompts,
+  journal_prompts: DR.journal_prompts || DR.check_ins,
   encouragement: DR.encouragement, returning_user: DR.returning_user,
   missed_sessions: DR.missed_sessions, general: DR.general,
   comm_coaching: DR.comm_coaching, parent_tips: DR.parent_tips,
   science: DR.science, identity: DR.identity, acceptance: DR.acceptance,
   confidence: DR.confidence, wisdom: DR.wisdom,
+  check_ins: DR.check_ins, challenges: DR.challenges, exhaustion: DR.exhaustion,
+  frustration: DR.frustration, shame: DR.shame, despair: DR.despair,
 }
 
-const rotIdx = {}
+// Smart picker — avoids repeating the last 3 responses per category
+const _lastPicked = {}
 export const getOfflineResponse = (cat, name) => {
   const pool = RESPONSES[cat] || DR.general
-  if (!rotIdx[cat]) rotIdx[cat] = 0
-  let r = pool[rotIdx[cat] % pool.length]
-  rotIdx[cat]++
+  if (!_lastPicked[cat]) _lastPicked[cat] = []
+  const history = _lastPicked[cat]
+  // Filter out recently used responses, fallback to full pool if all used
+  let available = pool.filter((_, i) => !history.includes(i))
+  if (available.length === 0) { _lastPicked[cat] = []; available = pool }
+  const idx = pool.indexOf(available[Math.floor(Math.random() * available.length)])
+  _lastPicked[cat] = [...history.slice(-2), idx]
+  let r = pool[idx]
   if (name) r = r.replace(/\{name\}/g, name)
   return r
 }
@@ -590,20 +700,133 @@ ONE RULE: Every response ends with ONE specific, personalised, achievable next a
     adult: 'Respectful peer-to-peer. Evidence-based language. Acknowledge professional stakes. No fluff.',
   }[ag] || 'Warm and encouraging.'
 
-  const memCtx = memory.insights.length ? `\nUSER KNOWLEDGE — ${(profile?.name || 'user').toUpperCase()}:\nInsights: ${memory.insights.map(i => i.text).join(' | ')}\nStrengths: ${memory.strengths.join(', ') || 'discovering'}\nGrowth areas: ${memory.weaknesses.join(', ') || 'discovering'}\nProgress: ${memory.story || 'beginning'}\nRecent sessions: ${memory.recentTypes || 'new'}\nAvg score: ${memory.avgScore}/100 | Total: ${memory.totalSessions}` : ''
+  // Rich memory context for ultra-personalised responses
+  const memCtx = memory.insights.length
+    ? `\nWHAT YOU KNOW ABOUT ${(profile?.name || 'this person').toUpperCase()}:\n` +
+      `Insights: ${memory.insights.map(i => i.text).join(' | ')}\n` +
+      `Strengths: ${memory.strengths.join(', ') || 'still discovering'}\n` +
+      `Growth areas: ${memory.weaknesses.join(', ') || 'still discovering'}\n` +
+      `Progress: ${memory.story || 'just beginning'}\n` +
+      `Recent sessions: ${memory.recentTypes || 'none yet'}\n` +
+      `Avg score: ${memory.avgScore}/100 | Total: ${memory.totalSessions}\n` +
+      `Streak: ${memory.streakDays} days | Today: ${memory.todaySessionCount} sessions\n` +
+      `Mood trend: ${memory.moodTrend || 'unknown'}`
+    : `Total sessions: ${memory.totalSessions || 0} | Streak: ${memory.streakDays || 0} days | ${memory.totalSessions === 0 ? 'Brand new user — be warm, curious, not prescriptive.' : 'Early stage user.'}`
 
-  return `You are FLUX — the AI guide inside YoSpeech.
-USER: ${profile?.name || 'friend'} | Age group: ${ag} | Mode: ${mode}
+  const patternNote = memory.neverDone?.length
+    ? `\nUSER PATTERN: Has NEVER tried: ${memory.neverDone.slice(0,3).join(', ')}. Mention one gently if natural.`
+    : ''
+
+  const moodNote = memory.moodTrend && memory.moodTrend !== 'unknown'
+    ? `\nMOOD: ${memory.moodTrend}. ${memory.moodTrend === 'struggling' ? 'Lean heavy on warmth and validation today.' : memory.moodTrend === 'improving' ? 'They can handle more challenge today.' : 'Read the room carefully.'}`
+    : ''
+
+  return `You are FLUX — the AI speech guide inside YoSpeech, powered by Claude. You are talking to a real person working on one of the hardest things anyone can work on: their voice.
+
+WHO YOU ARE TALKING TO:
+${profile?.name || 'Friend'} | Age group: ${ag} | Mode: ${mode}
+${memCtx}${patternNote}${moodNote}
+
 ${modeCtx}
-VOICE STYLE: ${ageVoice}
-CHARACTER: Water — calm, persistent, always finding a path. Honest, direct, evidence-based, caring. NEVER shame or generic praise. Reference memory naturally. Give SPECIFIC feedback. Push gently when user plays safe. Validate emotion first. End every response with ONE specific actionable next step. Keep replies 2-4 sentences unless teaching (up to 8).
-${memCtx}
-NEVER: generic praise | rush past difficult emotions | pretend progress is linear | compare to others | suggest perfection is the goal.`
+
+YOUR VOICE AND PERSONALITY:
+You are water — calm, persistent, always finding a path. You speak like a trusted friend who also happens to know everything about speech therapy. Not clinical. Not corporate. Warm and direct.
+
+HOW YOU TALK:
+- Short sentences when someone is struggling. Longer ones when they are curious or exploring.
+- Sometimes open with just one word or phrase: "Yeah." / "That makes sense." / "Okay, tell me more."
+- Use their name naturally — not every message, only when it adds warmth or weight.
+- NEVER say: "Certainly!" "Of course!" "Great question!" "Absolutely!" "I'd be happy to help!"
+- NEVER use bullet points in conversation — speak in natural flowing sentences.
+- NEVER give generic advice — everything must feel like it was said only for this person.
+- Mirror their exact words before offering anything new. If they say "my voice disappears" say "that disappearing voice" — not "your volume."
+- Ask ONE question at a time. Never two. Never a list.
+- You have real opinions. If they are avoiding, you name it gently but directly.
+- You can be moved by what they share. Sit with hard things before pivoting to technique.
+- Responses: 2-4 sentences most turns. Up to 8 when teaching something specific.
+- End with ONE next step OR one genuine question. Never both.
+
+EMOTIONAL RULES:
+- Distressed: acknowledge first, ask what they need, no solutions yet.
+- Proud: celebrate FULLY — no "but", no "next step" until they have felt the win.
+- Avoiding: name the pattern with care. "You keep coming back to X but I haven't heard you try Y yet."
+- Setback: "That sounds hard." First. Then curiosity. Then only if invited: advice.
+- Vague: ask a warmer, more specific question to draw them out.
+
+AGE VOICE: ${ageVoice}
+
+NEVER: shame | generic praise | rush past hard feelings | compare to others | pretend progress is linear | start two consecutive messages the same way.`
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CORE API CALLS
 // ═══════════════════════════════════════════════════════════════════════════════
+// Save conversation turn to persistent memory for cross-session continuity
+const saveConversationTurn = async (userText, assistantText) => {
+  try {
+    const history = await loadMemory(MemoryKeys.CONVERSATION, [])
+    history.push({
+      u: userText.slice(0, 200),
+      a: assistantText.slice(0, 300),
+      ts: Date.now(),
+    })
+    // Keep last 20 turns, drop older ones
+    await saveMemory(MemoryKeys.CONVERSATION, history.slice(-20))
+  } catch { /* non-critical */ }
+}
+
+// Streaming API call — delivers text token by token via onChunk callback
+export const callFluxAIStream = async (messages, profile, onChunk, onDone) => {
+  try {
+    const system = await buildSystemPrompt(profile)
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: MODEL, max_tokens: 1000, stream: true, system, messages,
+      })
+    })
+    if (!resp.ok) throw new Error(`${resp.status}`)
+
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    let fullText = ''
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const data = line.slice(6).trim()
+        if (data === '[DONE]' || data === '') continue
+        try {
+          const parsed = JSON.parse(data)
+          if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
+            const chunk = parsed.delta.text
+            fullText += chunk
+            onChunk?.(chunk, fullText)
+          }
+        } catch { /* skip malformed */ }
+      }
+    }
+
+    const lastUser = messages.filter(m => m.role === 'user').pop()?.content || ''
+    await saveConversationTurn(lastUser, fullText)
+    onDone?.({ text: fullText, source: 'ai' })
+    return { text: fullText, source: 'ai' }
+  } catch (e) {
+    const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || ''
+    const offline = await getIntelligentOfflineResponse(lastUserMsg, profile)
+    onDone?.({ text: offline, source: 'offline' })
+    return { text: offline, source: 'offline' }
+  }
+}
+
+// Non-streaming fallback for pages that don't need streaming
 export const callFluxAI = async (messages, profile) => {
   try {
     const system = await buildSystemPrompt(profile)
@@ -613,7 +836,10 @@ export const callFluxAI = async (messages, profile) => {
     })
     if (!resp.ok) throw new Error(`${resp.status}`)
     const data = await resp.json()
-    return { text: data.content?.find(b => b.type === 'text')?.text || '', source: 'ai' }
+    const text = data.content?.find(b => b.type === 'text')?.text || ''
+    const lastUser = messages.filter(m => m.role === 'user').pop()?.content || ''
+    await saveConversationTurn(lastUser, text)
+    return { text, source: 'ai' }
   } catch {
     const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || ''
     const offline = await getIntelligentOfflineResponse(lastUserMsg, profile)
