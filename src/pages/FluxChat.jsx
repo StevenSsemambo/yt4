@@ -112,7 +112,13 @@ export default function FluxChat() {
     )
 
   // Smart contextual greeting
+  // Bug 2 fix: depend on `profile` so this runs once profile is loaded, not
+  // on the first render when profile is still null.
+  // Bug 5 fix: mounted ref prevents the StrictMode double-invoke from pushing
+  // two greeting messages into state.
   useEffect(() => {
+    if (!profile) return   // wait for context to load profile
+    let mounted = true
     preloadVoices()
     const buildGreeting = async () => {
       const name = profile?.name || 'friend'
@@ -140,18 +146,20 @@ export default function FluxChat() {
         greeting = opts[Math.floor(Math.random() * opts.length)]
       }
 
+      if (!mounted) return   // component unmounted (StrictMode cleanup) — bail out
       setMessages([{ role: 'assistant', text: greeting, id: 1 }])
       setGreetingDone(true)
       if (autoSpeak) {
         setTimeout(() => {
+          if (!mounted) return
           setFluxSpeaking(true)
           speakFlux(greeting, ageGroup, { onEnd: () => setFluxSpeaking(false) })
         }, 700)
       }
     }
     buildGreeting()
-    return () => stopSpeaking()
-  }, [])
+    return () => { mounted = false; stopSpeaking() }
+  }, [profile])  // re-run only when profile changes (i.e. once it loads)
 
   // Auto-scroll
   useEffect(() => {
