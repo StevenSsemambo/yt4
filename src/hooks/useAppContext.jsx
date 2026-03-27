@@ -13,23 +13,32 @@ export const AppProvider = ({ children }) => {
   const [notification,  setNotification]  = useState(null)
   const [userEmail,     setUserEmail]     = useState('')
   const [todayMood,     setTodayMood]     = useState(null)
+  // Bug 1 fix: onboarded lives in context so RequireProfile doesn't need a
+  // second independent DB read that can race with the profile load.
+  const [onboarded,     setOnboarded]     = useState(null)
 
   const loadProfile = useCallback(async () => {
     try {
-      const [p, sessions, s, email, mood] = await Promise.all([
+      // Ensure Dexie has finished any pending version upgrade before reading
+      // (fixes Bug 4 — Splash navigates while v1→v2 migration is still running)
+      await db.open()
+      const [p, sessions, s, email, mood, ob] = await Promise.all([
         getProfile(),
         getTotalSessions(),
         getStreakCount(),
         getSetting('user_email', ''),
         getSetting('today_mood', null),
+        getSetting('onboarded', false),   // Bug 1 fix: read alongside profile
       ])
       setProfile(p)
       setTotalSessions(sessions)
       setStreak(s)
       setUserEmail(email || '')
       setTodayMood(mood)
+      setOnboarded(ob)
     } catch (e) {
       console.error('loadProfile error:', e)
+      setOnboarded(false)
     } finally {
       setLoading(false)
     }
@@ -62,6 +71,7 @@ export const AppProvider = ({ children }) => {
     ])
     setProfile(null)
     setUserEmail('')
+    setOnboarded(false)
   }, [])
 
   return (
@@ -71,6 +81,7 @@ export const AppProvider = ({ children }) => {
       streak,
       fluxMessage, showFluxMsg, triggerFlux,
       loading,
+      onboarded,           // Bug 1 fix: expose to RequireProfile
       refreshProfile, loadProfile,
       notification, showNotification,
       userEmail,
